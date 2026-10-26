@@ -256,6 +256,9 @@ export default function Dashboard() {
   const [navProgress, setNavProgress] = useState<NavProgress | null>(null);
   const [watchedFlights, setWatchedFlights] = useState<WatchedFlight[]>([]);
   const [aircraftAirports, setAircraftAirports] = useState<Record<string, Airport[]>>({});
+  const [flightNextRefreshAt, setFlightNextRefreshAt] = useState<number | null>(null);
+  const [flightRefreshing, setFlightRefreshing] = useState(false);
+  const flightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // The popup lives in raw map HTML, so it hands aircraft over through a global.
   useEffect(() => {
@@ -466,6 +469,8 @@ export default function Dashboard() {
     flights: false,
     /* Show only 10% of commercial flights */
     flights_10percent: true,
+    /* Compact age / next-refresh readout for the flight feed. */
+    flights_status: false,
     private: false,
     jets: false,
     military: false,
@@ -989,6 +994,20 @@ export default function Dashboard() {
     }
   }, []);
 
+  /** Force a flight-data refresh and reschedule the next poll with the usual interval. */
+  const refreshFlights = useCallback(async () => {
+    setFlightRefreshing(true);
+    try {
+      await fetchEndpoint('/api/flights?force_update=1');
+    } finally {
+      setFlightRefreshing(false);
+    }
+    const gap = dataRef.current.providers?.opensky_auth === false ? 300_000 : 120_000;
+    setFlightNextRefreshAt(Date.now() + gap);
+    if (flightTimerRef.current) clearTimeout(flightTimerRef.current);
+    flightTimerRef.current = setTimeout(refreshFlights, gap);
+  }, [fetchEndpoint]);
+
   // ── PROGRESSIVE DATA LOADING (request-optimized) ──
   useEffect(() => {
     // Priority 1: Core feeds (always needed for panels)
@@ -1169,26 +1188,18 @@ export default function Dashboard() {
     const intervals: ReturnType<typeof setInterval>[] = [];
     const stopFns: (() => void)[] = [];
     if (activeLayers.flights || activeLayers.military || activeLayers.jets || activeLayers.private) {
-      /* OpenSky's budget is per day, so the useful cadence depends on whether
-         the server actually authenticated: an authenticated deployment can
-         afford a global snapshot about every 90s, an anonymous one only every
-         15 minutes. Poll at the rate the reply advertises; the server's own
-         gate is 90s (auth) or 15 min (anon), so a 5-minute client poll on the
-         anonymous path mostly returns the cached snapshot. Rescheduled rather
-         than fixed because the flag arrives with the data. */
-      let flightTimer: ReturnType<typeof setTimeout>;
-      let stopped = false;
-      // Before the first reply lands there is no flag to read. Checking back in
-      // two minutes costs an anonymous reader one cached request and gets an
-      // authenticated deployment onto the fast cadence straight away.
-      const flightGapMs = () => (dataRef.current.providers?.opensky_auth === false ? 300_000 : 120_000);
-      const pollFlights = async () => {
-        if (stopped) return;
-        await fetchEndpoint('/api/flights');
-        if (!stopped) flightTimer = setTimeout(pollFlights, flightGapMs());
-      };
-      flightTimer = setTimeout(pollFlights, flightGapMs());
-      stopFns.push(() => { stopped = true; clearTimeout(flightTimer); });
+      if (!layerFetchedRef.current.has('flights')) {
+        fetchEndpoint('/api/flights');
+        layerFetchedRef.current.add('flights');
+      }
+      const gap = dataRef.current.providers?.opensky_auth === false ? 300_000 : 120_000;
+      setFlightNextRefreshAt(Date.now() + gap);
+      flightTimerRef.current = setTimeout(refreshFlights, gap);
+      stopFns.push(() => {
+        if (flightTimerRef.current) clearTimeout(flightTimerRef.current);
+        flightTimerRef.current = null;
+        setFlightNextRefreshAt(null);
+      });
     }
 
     if (activeLayers.balloons) {
@@ -1225,7 +1236,7 @@ export default function Dashboard() {
       }, 300000)); // 5m — a blocklist turns over in hours, not seconds
     }
     return () => { intervals.forEach(clearInterval); stopFns.forEach(stop => stop()); };
-  }, [activeLayers, fetchEndpoint]);
+  }, [activeLayers, fetchEndpoint, refreshFlights]);
 
   /* ── LIVE MALWARE — pushed over SSE while the layer is on ──
      Detections arrive when URLhaus reports them rather than on a timer, so
@@ -1620,6 +1631,9 @@ export default function Dashboard() {
           drawnPolygons={drawnPolygons}
           aircraftAirports={aircraftAirports}
           watchedFlights={watchedFlights}
+          flightNextRefreshAt={flightNextRefreshAt}
+          flightRefreshing={flightRefreshing}
+          onFlightRefresh={refreshFlights}
           onOiGlobe={handleOiGlobe}
           onOiSelect={handleOiSelect}
           onOiHover={setOiHover}

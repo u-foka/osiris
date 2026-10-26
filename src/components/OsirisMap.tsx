@@ -12,7 +12,7 @@ import { attachHighlights, type Highlighter } from '@/lib/oi/highlights';
 import type { Highlight } from '@/lib/oi/assist/tools';
 import { createSatelliteLayer, parseColor, SAT_MAX_ZOOM, type SatPoint } from '@/lib/satellite-layer';
 import { COMMERCIAL_SAMPLE_RATIO, trackFeatures } from '@/lib/aviation';
-import { MAP_DEFAULTS, MAP_PALETTE_KEYS, readMapPalette, satColorFor, type MapPalette } from '@/lib/map-palette';import { STYLE_EVENT } from '@/lib/style-tokens';
+import FlightStatusChip from './FlightStatusChip';import { MAP_DEFAULTS, MAP_PALETTE_KEYS, readMapPalette, satColorFor, type MapPalette } from '@/lib/map-palette';import { STYLE_EVENT } from '@/lib/style-tokens';
 import { arrivalBeacons } from '@/lib/malware-intel';
 import { ALERT_KINDS, timeAgo, type AlertKind } from '@/lib/alert-digest';
 import SatelliteCard, { type SatelliteDetail } from '@/components/SatelliteCard';
@@ -116,6 +116,12 @@ interface OsirisMapProps {
   aircraftAirports?: Record<string, Array<{ icao: string; iata?: string; city?: string; lat: number; lng: number }>>;
   /** Aircraft the operator is watching. Each keeps a persistent flown track. */
   watchedFlights?: Array<{ icao24: string; callsign?: string }>;
+  /** Scheduled time of the next flight-data refresh, for the status chip. */
+  flightNextRefreshAt?: number | null;
+  /** Whether a forced refresh is currently in flight. */
+  flightRefreshing?: boolean;
+  /** Force a flight-data refresh and reschedule the poll. */
+  onFlightRefresh?: () => void;
   /** Hands the page OI's globe layer, so a run draws without re-rendering the map. Null when it goes. */
   onOiGlobe?: (globe: OiGlobe | null) => void;
   /** A piece of OI's analysis was clicked: an arc ("link:<id>") or a point ("a:<actor>", "e:<event>"…); null for empty map. */
@@ -213,7 +219,7 @@ interface AlertPinFeature {
   properties: AlertPinProps;
 }
 
-function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightClick, onViewStateChange, onReady, flyToLocation, alertPinIds = null, projection = 'globe', terrainEnabled = false, terrainRetry = 0, terrainFocus = 0, onTerrainStatusChange, onLayerOff, mapStyle = 'dark', sweepData, scanTargets = [], demoMode = false, theme = 'core', drawnPolygons = [], arcgisLayers = [], drawMode = null, onDrawComplete, onDrawProgress, onDrawCancel, drawCommand = null, onMapCenter, onTransitStatus, route = null, userLocation = null, followUser = false, onFollowInterrupt, navigating = false, aircraftAirports = {}, watchedFlights = [], onOiGlobe, onOiSelect, onOiHover, onOiFollow, oiHighlight = null }: OsirisMapProps) {
+function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightClick, onViewStateChange, onReady, flyToLocation, alertPinIds = null, projection = 'globe', terrainEnabled = false, terrainRetry = 0, terrainFocus = 0, onTerrainStatusChange, onLayerOff, mapStyle = 'dark', sweepData, scanTargets = [], demoMode = false, theme = 'core', drawnPolygons = [], arcgisLayers = [], drawMode = null, onDrawComplete, onDrawProgress, onDrawCancel, drawCommand = null, onMapCenter, onTransitStatus, route = null, userLocation = null, followUser = false, onFollowInterrupt, navigating = false, aircraftAirports = {}, watchedFlights = [], flightNextRefreshAt = null, flightRefreshing = false, onFlightRefresh, onOiGlobe, onOiSelect, onOiHover, onOiFollow, oiHighlight = null }: OsirisMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -1110,13 +1116,18 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
             <span style="color:#E8E6E0;font-size:15px;font-weight:700;letter-spacing:0.08em;">${htmlEsc(cs)}</span>
             <span style="color:#5C5A54;font-size:10px;">${htmlEsc(p.icao24||'')}</span>
           </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px;">
-            <div><span style="color:#5C5A54;font-size:9px;">MODEL</span><br/><span style="color:#B0BEC5;">${htmlEsc(p.model||'—')}</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">ALT</span><br/><span style="color:#B0BEC5;">${p.alt?Math.round(p.alt)+'m':'—'}</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">SPEED</span><br/><span style="color:#B0BEC5;">${p.speed_knots||'—'}kt</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">HDG</span><br/><span style="color:#B0BEC5;">${Math.round(p.heading||0)}°</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">REG</span><br/><span style="color:#B0BEC5;">${htmlEsc(p.registration||'—')}</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">POS</span><br/><span style="color:#B0BEC5;">${coords[1].toFixed(2)},${coords[0].toFixed(2)}</span></div>
+          <div style="display:flex;gap:8px;align-items:flex-start;margin-top:4px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px;flex:1;min-width:0;">
+              <div><span style="color:#5C5A54;font-size:9px;">MODEL</span><br/><span style="color:#B0BEC5;">${htmlEsc(p.model||'—')}</span></div>
+              <div><span style="color:#5C5A54;font-size:9px;">ALT</span><br/><span style="color:#B0BEC5;">${p.alt?Math.round(p.alt)+'m':'—'}</span></div>
+              <div><span style="color:#5C5A54;font-size:9px;">SPEED</span><br/><span style="color:#B0BEC5;">${p.speed_knots||'—'}kt</span></div>
+              <div><span style="color:#5C5A54;font-size:9px;">HDG</span><br/><span style="color:#B0BEC5;">${Math.round(p.heading||0)}°</span></div>
+              <div><span style="color:#5C5A54;font-size:9px;">REG</span><br/><span style="color:#B0BEC5;">${htmlEsc(p.registration||'—')}</span></div>
+              <div><span style="color:#5C5A54;font-size:9px;">POS</span><br/><span style="color:#B0BEC5;">${coords[1].toFixed(2)},${coords[0].toFixed(2)}</span></div>
+            </div>
+            <div id="photo-${idSafe(p.icao24||'')}" style="width:108px;height:72px;flex-shrink:0;border-radius:6px;overflow:hidden;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;">
+              <span style="color:#5C5A54;font-size:8px;">Loading…</span>
+            </div>
           </div>
           <div id="ac-${idSafe(p.icao24||'')}" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);">
             <span style="color:#5C5A54;font-size:9px;letter-spacing:0.1em;">IDENTIFYING AIRFRAME…</span>
@@ -1142,42 +1153,62 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
           const detailParams = new URLSearchParams({ icao24: p.icao24 });
           // End the path where the plane on the map is, not at the live tip.
           if (typeof p.time_position === 'number') detailParams.set('until', String(p.time_position));
-          fetch(`/api/aircraft?${detailParams}`)
-            .then(r => (r.ok ? r.json() : null))
-            .then((d) => {
-              if (thisTrack !== trackRequest) return;
-              // The trim leaves the path at the feed's last fix, a few
-              // kilometres behind the icon; close that gap so the line ends
-              // under the aircraft rather than short of it.
-              drawFlightTrack(d?.track, d?.altitudes, {
-                lng: coords[0],
-                lat: coords[1],
-                alt: typeof p.alt === 'number' ? p.alt * 3.28084 : null,
-              });
-              if (Array.isArray(d?.track) && d.track.length) {
-                selectedTrackRef.current = {
-                  icao24: p.icao24,
-                  track: d.track,
-                  altitudes: Array.isArray(d.altitudes) ? d.altitudes : [],
-                  final: {
-                    lng: coords[0],
-                    lat: coords[1],
-                    alt: typeof p.alt === 'number' ? p.alt * 3.28084 : null,
-                  },
-                };
+          Promise.all([
+            fetch(`/api/aircraft?${detailParams}`).then(r => (r.ok ? r.json() : null)).catch(() => null),
+            fetch(`/api/aircraft-photo?icao24=${encodeURIComponent(p.icao24)}`).then(r => (r.ok ? r.json() : null)).catch(() => null),
+          ]).then(([d, photo]) => {
+            if (thisTrack !== trackRequest) return;
+            // The trim leaves the path at the feed's last fix, a few
+            // kilometres behind the icon; close that gap so the line ends
+            // under the aircraft rather than short of it.
+            drawFlightTrack(d?.track, d?.altitudes, {
+              lng: coords[0],
+              lat: coords[1],
+              alt: typeof p.alt === 'number' ? p.alt * 3.28084 : null,
+            });
+            if (Array.isArray(d?.track) && d.track.length) {
+              selectedTrackRef.current = {
+                icao24: p.icao24,
+                track: d.track,
+                altitudes: Array.isArray(d.altitudes) ? d.altitudes : [],
+                final: {
+                  lng: coords[0],
+                  lat: coords[1],
+                  alt: typeof p.alt === 'number' ? p.alt * 3.28084 : null,
+                },
+              };
+            }
+            const el = document.getElementById(`ac-${p.icao24}`);
+            if (!el) return;
+            if (!d || d.error) {
+              el.innerHTML = '<span style="color:#5C5A54;font-size:9px;">AIRFRAME NOT IN REGISTRY</span>';
+              // Still show a photo if one was found, even without identity.
+            }
+            const bits = d ? [d.registration, d.typeCode, d.operator].filter(Boolean)
+              .map((x: string) => htmlEsc(String(x))).join(' · ') : '';
+            const modelLine = d
+              ? `<div style="color:#E8E6E0;font-size:11px;line-height:1.35;">${htmlEsc(d.model || 'Unidentified type')}</div>` +
+                (bits ? `<div style="color:#78909C;font-size:9px;margin-top:2px;">${bits}</div>` : '')
+              : '';
+            const boxStyle = 'width:108px;height:72px;flex-shrink:0;border-radius:6px;overflow:hidden;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;position:relative;';
+            const spinner = '<style>@keyframes spin{to{transform:rotate(360deg)}}</style><div class="photo-spinner" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2" style="animation:spin 0.8s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>';
+            const photoEl = document.getElementById(`photo-${idSafe(p.icao24 || '')}`);
+            if (photoEl) {
+              if (photo?.url) {
+                photoEl.innerHTML =
+                  spinner +
+                  `<img src="${urlSafe(photo.url)}" alt="aircraft" loading="lazy" style="width:100%;height:100%;object-fit:contain;display:block;" onload="var s=this.parentNode.querySelector('.photo-spinner');if(s)s.remove();" onerror="this.parentNode.innerHTML='<span style=color:#5C5A54;font-size:8px;>Not available</span>';" />`;
+              } else {
+                photoEl.innerHTML = '<span style="color:#5C5A54;font-size:8px;">No photo</span>';
               }
-              const el = document.getElementById(`ac-${p.icao24}`);
-              if (!el || !d || d.error) {
-                if (el) el.innerHTML = '<span style="color:#5C5A54;font-size:9px;">AIRFRAME NOT IN REGISTRY</span>';
-                return;
-              }
-              const bits = [d.registration, d.typeCode, d.operator].filter(Boolean)
-                .map((x: string) => htmlEsc(String(x))).join(' · ');
-              el.innerHTML =
-                `<div style="color:#E8E6E0;font-size:11px;line-height:1.35;">${htmlEsc(d.model || 'Unidentified type')}</div>` +
-                (bits ? `<div style="color:#78909C;font-size:9px;margin-top:2px;">${bits}</div>` : '');
-            })
-            .catch(() => {});
+            }
+            const creditLine = photo?.photographer
+              ? `<div style="color:#5C5A54;font-size:8px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Photo: ${htmlEsc(photo.photographer)}${photo.link ? ` · <a href="${urlSafe(photo.link)}" target="_blank" style="color:#78909C;">source</a>` : ''}</div>`
+              : '';
+            if (modelLine || creditLine) el.innerHTML = modelLine + creditLine;
+            else if (!photo?.url) el.innerHTML = '<span style="color:#5C5A54;font-size:9px;">AIRFRAME NOT IN REGISTRY</span>';
+          })
+          .catch(() => {});
         }
 
         // Resolve origin/destination for the readout only. The line this used
@@ -2098,6 +2129,10 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     const features = trackFeatures(sel.track, sel.altitudes, final);
     const source = map.getSource('flight-track') as maplibregl.GeoJSONSource | undefined;
     if (source && features.length) source.setData({ type: 'FeatureCollection', features } as never);
+    // Keep the popup anchored to the aircraft as the feed refreshes, instead
+    // of leaving it pinned to the spot where the plane was clicked.
+    const popup = popupRef.current;
+    if (popup && p) popup.setLngLat([p.lng, p.lat]);
   }, [mapReady, data.commercial_flights, data.private_flights, data.private_jets, data.military_flights]);
 
   /**
@@ -3681,6 +3716,11 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         <div className={DOCK}>
           {activeLayers.wind && <WindBar mapRef={mapRef} controls={!!activeLayers.wind_controls} particles={!!activeLayers.wind_particles} onOff={() => onLayerOff?.('wind')} />}
           {activeLayers.rain && <RainBar mapRef={mapRef} mapStyle={mapStyle} controls={!!activeLayers.rain_controls} onOff={() => onLayerOff?.('rain')} />}
+        </div>
+      )}
+      {mapReady && activeLayers.flights_status && (
+        <div className={DOCK}>
+          <FlightStatusChip dataTimestamp={data?.timestamp ?? null} nextRefreshAt={flightNextRefreshAt ?? null} onRefresh={onFlightRefresh} refreshing={flightRefreshing} />
         </div>
       )}
     </>

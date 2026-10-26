@@ -265,10 +265,14 @@ function ingestAc(raw: any[], into: any[], seen: Set<string>) {
   }
 }
 
-export async function GET() {
+export async function GET(request?: Request) {
+  const forceUpdate = Boolean(request && new URL(request.url).searchParams.get('force_update') === '1');
   const now = Date.now();
 
-  if (cachedData && now - lastFetchTime < CACHE_TTL) {
+  // A forced refresh (e.g. the manual button) bypasses the short cache so the
+  // response carries a fresh timestamp, but it still shares an in-flight fetch
+  // and still respects the OpenSky rate gate below.
+  if (!forceUpdate && cachedData && now - lastFetchTime < CACHE_TTL) {
     return NextResponse.json(cachedData, {
       headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60' },
     });
@@ -297,9 +301,11 @@ export async function GET() {
     // instead of sum. The military feed runs every cycle regardless of OpenSky
     // status and is always current, so military traffic stays live even while an
     // anonymous OpenSky snapshot is waiting out its interval.
+    // A forced refresh bypasses the interval gate so positions can move, but
+    // it still honours the cooldown set after a 429 to avoid hammering OpenSky.
     const skipOpenSky =
       Date.now() < openSkyCooldownUntil ||
-      Date.now() - osSnapshotTime < openSkyInterval();
+      (!forceUpdate && Date.now() - osSnapshotTime < openSkyInterval());
     const token = skipOpenSky ? null : await openskyToken();
     const osInit: RequestInit = token
       ? { signal: AbortSignal.timeout(30000), headers: { Authorization: `Bearer ${token}` } }
