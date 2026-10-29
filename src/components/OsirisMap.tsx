@@ -1116,8 +1116,8 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
             <span style="color:#E8E6E0;font-size:15px;font-weight:700;letter-spacing:0.08em;">${htmlEsc(cs)}</span>
             <span style="color:#5C5A54;font-size:10px;">${htmlEsc(p.icao24||'')}</span>
           </div>
-          <div style="display:flex;gap:8px;align-items:flex-start;margin-top:4px;">
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px;flex:1;min-width:0;">
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;margin-top:4px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px;flex:1 1 200px;min-width:0;">
               <div><span style="color:#5C5A54;font-size:9px;">MODEL</span><br/><span style="color:#B0BEC5;">${htmlEsc(p.model||'—')}</span></div>
               <div><span style="color:#5C5A54;font-size:9px;">ALT</span><br/><span style="color:#B0BEC5;">${p.alt?Math.round(p.alt)+'m':'—'}</span></div>
               <div><span style="color:#5C5A54;font-size:9px;">SPEED</span><br/><span style="color:#B0BEC5;">${p.speed_knots||'—'}kt</span></div>
@@ -1125,7 +1125,7 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
               <div><span style="color:#5C5A54;font-size:9px;">REG</span><br/><span style="color:#B0BEC5;">${htmlEsc(p.registration||'—')}</span></div>
               <div><span style="color:#5C5A54;font-size:9px;">POS</span><br/><span style="color:#B0BEC5;">${coords[1].toFixed(2)},${coords[0].toFixed(2)}</span></div>
             </div>
-            <div id="photo-${idSafe(p.icao24||'')}" style="width:108px;height:72px;flex-shrink:0;border-radius:6px;overflow:hidden;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;">
+            <div id="photo-${idSafe(p.icao24||'')}" style="width:108px;height:72px;flex:0 0 108px;border-radius:6px;overflow:hidden;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;">
               <span style="color:#5C5A54;font-size:8px;">Loading…</span>
             </div>
           </div>
