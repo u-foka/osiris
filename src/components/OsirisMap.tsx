@@ -3712,15 +3712,11 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       )}
       {selectedSat && <SatelliteCard sat={selectedSat} onClose={clearSat} />}
       {mapReady && <MapControls mapRef={mapRef} onInteract={onFollowInterrupt} />}
-      {mapReady && (activeLayers.wind || activeLayers.rain) && (
+      {mapReady && (activeLayers.wind || activeLayers.rain || activeLayers.flights_status) && (
         <div className={DOCK}>
           {activeLayers.wind && <WindBar mapRef={mapRef} controls={!!activeLayers.wind_controls} particles={!!activeLayers.wind_particles} onOff={() => onLayerOff?.('wind')} />}
           {activeLayers.rain && <RainBar mapRef={mapRef} mapStyle={mapStyle} controls={!!activeLayers.rain_controls} onOff={() => onLayerOff?.('rain')} />}
-        </div>
-      )}
-      {mapReady && activeLayers.flights_status && (
-        <div className={DOCK}>
-          <FlightStatusChip dataTimestamp={data?.timestamp ?? null} nextRefreshAt={flightNextRefreshAt ?? null} onRefresh={onFlightRefresh} refreshing={flightRefreshing} />
+          {activeLayers.flights_status && <FlightStatusChip dataTimestamp={data?.timestamp ?? null} nextRefreshAt={flightNextRefreshAt ?? null} onRefresh={onFlightRefresh} refreshing={flightRefreshing} />}
         </div>
       )}
     </>
